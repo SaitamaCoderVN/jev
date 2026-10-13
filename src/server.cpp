@@ -42,7 +42,18 @@ std::string Api::systemone(const Value& body, Timing& tm) const {
         size_t question;
         std::string instructions;
     };
+    // Counted before any prompt is built: a request of many choices with long options would otherwise
+    // hold gigabytes of prompts and the scheduler for minutes.
+    size_t prompt_count = 0;
+    for (auto& q : qs)
+        prompt_count += q.kind == "boolean" ? 1
+                        : q.kind == "choice" ? CHOICE_PHRASINGS.size() * q.texts.size()
+                                             : SCORE_PHRASINGS.size() * (q.texts.empty() ? 0 : q.texts.size() - 1);
+    if (max_prompts && prompt_count > max_prompts)
+        throw unprocessable(app_err({S("body")}, "The questions ask " + std::to_string(prompt_count) + " yes/no prompts (a choice one per option, a score one per level above the lowest); this server answers at most " +
+                                                     std::to_string(max_prompts) + " per request (--max-prompts)"));
     std::vector<Prompt> prompts;
+    prompts.reserve(prompt_count);
     for (size_t k = 0; k < qs.size(); ++k) {
         if (qs[k].kind == "boolean") {
             prompts.push_back({k, qs[k].instructions});
@@ -153,6 +164,13 @@ static bool json_content_type(const std::string& header) {
     return main == "application" && (sub == "json" || (sub.size() >= 5 && sub.compare(sub.size() - 5, 5, "+json") == 0));
 }
 
+// The key compared in time that does not depend on where the first difference is.
+static bool same_secret(const std::string& a, const std::string& b) {
+    unsigned char diff = a.size() == b.size() ? 0 : 1;
+    for (size_t i = 0; i < a.size(); ++i) diff |= static_cast<unsigned char>(a[i] ^ (i < b.size() ? b[i] : 0));
+    return diff == 0;
+}
+
 static std::string today_utc() {
     std::time_t t = std::time(nullptr);
     std::tm g{};
@@ -172,9 +190,10 @@ bool serve(const Api& api, const ServeOptions& o) {
     const std::string started_date = today_utc(), api_key = o.api_key;
 
     httplib::Server http;
+    http.set_payload_max_length(o.max_body);
     auto authorized = [&](const httplib::Request& req, httplib::Response& res) {
         if (api_key.empty()) return true;
-        if (req.get_header_value("Authorization") == "Bearer " + api_key) return true;
+        if (same_secret(req.get_header_value("Authorization"), "Bearer " + api_key)) return true;
         res.status = 401;
         res.set_header("WWW-Authenticate", "Bearer");
         res.set_content(ojson{{"detail", "Missing or invalid API key"}}.dump(), "application/json");
@@ -183,7 +202,8 @@ bool serve(const Api& api, const ServeOptions& o) {
     http.Post("/v1/systemone", [&](const httplib::Request& req, httplib::Response& res) {
         auto t0 = Clock::now();
         auto internal_error = [&] { res.status = 500; res.set_content("Internal Server Error", "text/plain; charset=utf-8"); };
-        // FastAPI: the body is read (and decoded, if JSON) before the API key is checked.
+        // The API key first: without it, nothing of the body is decoded (FastAPI decodes it before).
+        if (!authorized(req, res)) return;
         Value body;  // null: no body
         if (!req.body.empty()) {
             if (json_content_type(req.get_header_value("Content-Type"))) {
@@ -212,7 +232,6 @@ bool serve(const Api& api, const ServeOptions& o) {
                 body = Value::str(req.body);
             }
         }
-        if (!authorized(req, res)) return;
         try {
             Timing tm;
             tm.parse = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();

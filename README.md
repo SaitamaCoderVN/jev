@@ -94,8 +94,10 @@ request file without a server.
 | `--threads` | all logical CPUs | fewer if other heavy apps are running |
 | `--host`, `--port` | `127.0.0.1`, `8017` | where the server listens |
 | `--model-dir` | `model` beside the binary | the model folder |
+| `--max-body` | `16777216` (16 MiB) | largest request body, in bytes; larger gets a 413 |
+| `--max-prompts` | `1024` | most yes/no prompts per request (a choice costs one per option, a score one per level above the lowest); `0` = no limit |
 
-With `JEV_API_KEY` set, every call but `/health` needs `Authorization: Bearer <key>`. About 1 GB of memory,
+With `JEV_API_KEY` set, every call but `/health` needs `Authorization: Bearer <key>`. The key is checked before the body is read. To serve beyond this machine, set it and put a TLS reverse proxy in front. About 1 GB of memory,
 1.4 GB with the text cache full. Every option is described at the top of [src/main.cpp](src/main.cpp).
 
 ## Build from source

@@ -22,6 +22,7 @@ struct Api {
     std::string served;  // the model's name in answers
     size_t ctx;          // the longest prompt, in tokens
     ojson files;         // /health: the SHA-256 of each file of the model folder, and their fingerprint
+    size_t max_prompts = 0;  // the most yes/no prompts one request may ask (a choice: one per option); 0 = no limit
     std::string systemone(const Value& body, Timing& tm) const;
 };
 
@@ -31,6 +32,7 @@ std::string rendered_error(const ApiError& e);
 struct ServeOptions {
     std::string host, api_key;  // api_key empty: no authentication
     int port;
+    size_t max_body;  // the largest request body read, in bytes (larger: 413)
 };
 
 // Serves until the listener stops; false when it cannot listen.

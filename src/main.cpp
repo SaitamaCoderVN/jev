@@ -9,6 +9,9 @@
 //              [--batch-tokens 384] (most tokens of requests read together in one call; 0 = one at a time)
 //              [--state-cache 16] [--state-cache-tokens 8192]  (states kept for later requests, how many
 //                                    and how many state tokens in all; 0 = off)
+//              [--max-body 16777216] (the largest request body read, in bytes; larger: 413)
+//              [--max-prompts 1024]  (the most yes/no prompts one request asks: a noul question 1, a choice
+//                                    one per option, a score one per level above the lowest; 0 = no limit)
 //   jev decide REQUEST.json [--output FILE] [model options]
 //   model options: [--model-dir DIR (model/ beside the binary)] [--name NAME (the folder's model.json)]
 //                  [--threads N (all logical CPUs)] [--ctx 8192]
@@ -109,6 +112,7 @@ int main(int argc, char** argv) try {
     size_t ctx = 8192, warmup = Model::WARM_TOKENS, batch_tokens = 384;
     size_t state_cache = 16, state_cache_tokens = 8192;  // state snapshots: how many, how many state tokens in all
     size_t quantization_group = 128;
+    size_t max_body = 16 * 1024 * 1024, max_prompts = 1024;
     fs::path model_dir = fs::absolute(fs::path(argv[0])).parent_path() / "model";
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
@@ -125,6 +129,8 @@ int main(int argc, char** argv) try {
         else if (serving && a == "--batch-tokens") batch_tokens = std::stoul(next());
         else if (serving && a == "--state-cache") state_cache = std::stoul(next());
         else if (serving && a == "--state-cache-tokens") state_cache_tokens = std::stoul(next());
+        else if (serving && a == "--max-body") max_body = std::stoul(next());
+        else if (serving && a == "--max-prompts") max_prompts = std::stoul(next());
         else if (!serving && a == "--output") output = next();
         else if (!serving && input.empty() && a.rfind("--", 0) != 0) input = a;
         else { std::fprintf(stderr, "jev %s: unknown option %s\n%s", command.c_str(), a.c_str(), usage); return 2; }
@@ -178,8 +184,8 @@ int main(int argc, char** argv) try {
                  api_key.empty() ? "no auth" : "Bearer auth",
                  std::chrono::duration<double>(std::chrono::steady_clock::now() - load_start).count(), threads, model.describe().dump().c_str());
     Scheduler scheduler(model, warmup, batch_tokens);
-    Api api{model, vocab, scheduler, name, ctx, std::move(hashes)};
-    return serve(api, {host, api_key, port}) ? 0 : 1;
+    Api api{model, vocab, scheduler, name, ctx, std::move(hashes), max_prompts};
+    return serve(api, {host, api_key, port, max_body}) ? 0 : 1;
 } catch (const std::exception& e) {
     std::fprintf(stderr, "jev: %s\n", e.what());
     return 1;
